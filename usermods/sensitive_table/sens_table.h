@@ -1,142 +1,235 @@
 #pragma once
 #include "wled.h"
 
+/**
+ * Act following onboards buttons to light a specific led
+ **/
 class SensTable : public Usermod
 {
   public:
-    SensTable();
-    virtual ~SensTable();
+    SensTable()
+    {
 
-    void setup();
-    void loop();
-    uint16_t getId();
+    }
     
-    /**
-     * subscribe to MQTT topic for controlling usermod
-     */
-    void onMqttConnect(bool sessionPresent);
-    /**
-     * handling of MQTT message
-     * topic only contains stripped topic (part after /wled/MAC)
-     * topic should look like: /swipe with amessage of [up|down]
-     */
-    bool onMqttMessage(char* topic, char* payload);
+    virtual ~SensTable()
+    {
 
-    /*
-    * Shows the delay between steps and power-off time in the "info"
-    * tab of the web-UI.
-    */
-    void addToJsonInfo(JsonObject& root);
-    void addToJsonState(JsonObject& root);
-    /*
-    * Reads configuration settings from the json API.
-    * See void addToJsonState(JsonObject& root)
-    */
-    void readFromJsonState(JsonObject& root);
+    }
 
-    /*
-    * Writes the configuration to internal flash memory.
-    */
-    void addToConfig(JsonObject& root);
-    /*
-    * Reads the configuration to internal flash memory before setup() is called.
-    * 
-    * The function should return true if configuration was successfully loaded or false if there was no configuration.
-    */
-    bool readFromConfig(JsonObject& root);
+    /**
+     * Setup board IOs and init extender (nothing network related !)
+     * Called once at boot
+     **/
+    void setup()
+    {
+
+    }
+
+    /**
+     * Work loop
+     **/ 
+    void loop()
+    {
+      
+    }
+
+    /**
+     * Handle user buttons (i.e. one of the 4 set on the web UI)
+     **/ 
+    bool handleButton(uint8_t b)
+    {
+      return false;
+    }
+
+    /**
+     * ???
+     **/
+    void appendConfigData()
+    {
+      oappend(SET_F("dd=addDropdown('Sensitive table','type');"));
+      oappend(SET_F("addOption(dd,'None',0);"));
+      oappend(SET_F("addOption(dd,'SSD1306',1);"));
+      oappend(SET_F("addOption(dd,'SH1106',2);"));
+      oappend(SET_F("addOption(dd,'SSD1306 128x64',3);"));
+      oappend(SET_F("addOption(dd,'SSD1305',4);"));
+      oappend(SET_F("addOption(dd,'SSD1305 128x64',5);"));
+      oappend(SET_F("addOption(dd,'SSD1306 SPI',6);"));
+      oappend(SET_F("addOption(dd,'SSD1306 SPI 128x64',7);"));
+      oappend(SET_F("addInfo('4LineDisplay:pin[]',0,'<i>-1 use global</i>','I2C/SPI CLK');"));
+      oappend(SET_F("addInfo('4LineDisplay:pin[]',1,'<i>-1 use global</i>','I2C/SPI DTA');"));
+      oappend(SET_F("addInfo('4LineDisplay:pin[]',2,'','SPI CS');"));
+      oappend(SET_F("addInfo('4LineDisplay:pin[]',3,'','SPI DC');"));
+      oappend(SET_F("addInfo('4LineDisplay:pin[]',4,'','SPI RST');"));
+    }
     
+    /*
+     * addToJsonInfo() can be used to add custom entries to the /json/info part of the JSON API.
+     * Creating an "u" object allows you to add custom key/value pairs to the Info section of the WLED web UI.
+     * Below it is shown how this could be used for e.g. a light sensor
+     */
+    void addToJsonInfo(JsonObject& root)
+    {
+      //JsonObject user = root["u"];
+      //if (user.isNull()) user = root.createNestedObject("u");
+      //JsonArray data = user.createNestedArray(F("4LineDisplay"));
+      //data.add(F("Loaded."));
+    }
+
+    /*
+     * addToJsonState() can be used to add custom entries to the /json/state part of the JSON API (state object).
+     * Values in the state object may be modified by connected clients
+     */
+    void addToJsonState(JsonObject& root)
+    {
+    }
+
+    /*
+     * readFromJsonState() can be used to receive data clients send to the /json/state part of the JSON API (state object).
+     * Values in the state object may be modified by connected clients
+     */
+    void readFromJsonState(JsonObject& root)
+    {
+    //  if (!initDone) return;  // prevent crash on boot applyPreset()
+    }
+
+    /*
+     * Register in flash for persistent data
+     *
+     * addToConfig() will also not yet add your setting to one of the settings pages automatically.
+     * To make that work you still have to add the setting to the HTML, xml.cpp and set.cpp manually.
+     */
+    void addToConfig(JsonObject& obj)
+    {
+      // // determine if we are using global HW pins (data & clock)
+      // int8_t hw_dta, hw_clk;
+      // if ((type == SSD1306_SPI || type == SSD1306_SPI64)) {
+      //   hw_clk = spi_sclk<0 ? HW_PIN_CLOCKSPI : spi_sclk;
+      //   hw_dta = spi_mosi<0 ? HW_PIN_DATASPI : spi_mosi;
+      // } else {
+      //   hw_clk = i2c_scl<0 ? HW_PIN_SCL : i2c_scl;
+      //   hw_dta = i2c_sda<0 ? HW_PIN_SDA : i2c_sda;
+      // }
+
+      // JsonObject top   = root.createNestedObject(FPSTR(_name));
+      // top[FPSTR(_enabled)]       = enabled;
+
+      // JsonArray io_pin = top.createNestedArray("pin");
+      // for (int i=0; i<5; i++) {
+      //   if      (i==0 && ioPin[i]==hw_clk) io_pin.add(-1); // do not store global HW pin
+      //   else if (i==1 && ioPin[i]==hw_dta) io_pin.add(-1); // do not store global HW pin
+      //   else                               io_pin.add(ioPin[i]);
+      // }
+      // top["type"]                = type;
+      // top[FPSTR(_flip)]          = (bool) flip;
+      // top[FPSTR(_contrast)]      = contrast;
+      // top[FPSTR(_contrastFix)]   = (bool) contrastFix;
+      // #ifndef ARDUINO_ARCH_ESP32
+      // top[FPSTR(_refreshRate)]   = refreshRate;
+      // #endif
+      // top[FPSTR(_screenTimeOut)] = screenTimeout/1000;
+      // top[FPSTR(_sleepMode)]     = (bool) sleepMode;
+      // top[FPSTR(_clockMode)]     = (bool) clockMode;
+      // top[FPSTR(_showSeconds)]   = (bool) showSeconds;
+      // top[FPSTR(_busClkFrequency)] = ioFrequency/1000;
+      // DEBUG_PRINTLN(F("4 Line Display config saved."));
+    }
+
+    /*
+     * Read from flash persistent data
+     */
+    bool readFromConfig(JsonObject& obj)
+    {
+      // bool needsRedraw    = false;
+      // DisplayType newType = type;
+      // int8_t oldPin[5]; for (byte i=0; i<5; i++) oldPin[i] = ioPin[i];
+
+      // JsonObject top = root[FPSTR(_name)];
+      // if (top.isNull()) {
+      //   DEBUG_PRINT(FPSTR(_name));
+      //   DEBUG_PRINTLN(F(": No config found. (Using defaults.)"));
+      //   return false;
+      // }
+
+      // enabled       = top[FPSTR(_enabled)] | enabled;
+      // newType       = top["type"] | newType;
+      // for (byte i=0; i<5; i++) ioPin[i] = top["pin"][i] | ioPin[i];
+      // flip          = top[FPSTR(_flip)] | flip;
+      // contrast      = top[FPSTR(_contrast)] | contrast;
+      // #ifndef ARDUINO_ARCH_ESP32
+      // refreshRate   = top[FPSTR(_refreshRate)] | refreshRate;
+      // refreshRate   = min(5000, max(250, (int)refreshRate));
+      // #endif
+      // screenTimeout = (top[FPSTR(_screenTimeOut)] | screenTimeout/1000) * 1000;
+      // sleepMode     = top[FPSTR(_sleepMode)] | sleepMode;
+      // clockMode     = top[FPSTR(_clockMode)] | clockMode;
+      // showSeconds   = top[FPSTR(_showSeconds)] | showSeconds;
+      // contrastFix   = top[FPSTR(_contrastFix)] | contrastFix;
+      // if (newType == SSD1306_SPI || newType == SSD1306_SPI64)
+      //   ioFrequency = min(20000, max(500, (int)(top[FPSTR(_busClkFrequency)] | ioFrequency/1000))) * 1000;  // limit frequency
+      // else
+      //   ioFrequency = min(3400, max(100, (int)(top[FPSTR(_busClkFrequency)] | ioFrequency/1000))) * 1000;  // limit frequency
+
+      // DEBUG_PRINT(FPSTR(_name));
+      // if (!initDone) {
+      //   // first run: reading from cfg.json
+      //   type = newType;
+      //   DEBUG_PRINTLN(F(" config loaded."));
+      // } else {
+      //   DEBUG_PRINTLN(F(" config (re)loaded."));
+      //   // changing parameters from settings page
+      //   bool pinsChanged = false;
+      //   for (byte i=0; i<5; i++) if (ioPin[i] != oldPin[i]) { pinsChanged = true; break; }
+      //   if (pinsChanged || type!=newType) {
+      //     if (type != NONE) delete u8x8;
+      //     PinOwner po = PinOwner::UM_FourLineDisplay;
+      //     bool isSPI = (type == SSD1306_SPI || type == SSD1306_SPI64);
+      //     if (isSPI) {
+      //       pinManager.deallocateMultiplePins((const uint8_t *)(&oldPin[2]), 3, po);
+      //       uint8_t hw_sclk = spi_sclk<0 ? HW_PIN_CLOCKSPI : spi_sclk;
+      //       uint8_t hw_mosi = spi_mosi<0 ? HW_PIN_DATASPI : spi_mosi;
+      //       bool isHW = (oldPin[0]==hw_sclk && oldPin[1]==hw_mosi);
+      //       if (isHW) po = PinOwner::HW_SPI;
+      //     } else {
+      //       uint8_t hw_scl = i2c_scl<0 ? HW_PIN_SCL : i2c_scl;
+      //       uint8_t hw_sda = i2c_sda<0 ? HW_PIN_SDA : i2c_sda;
+      //       bool isHW = (oldPin[0]==hw_scl && oldPin[1]==hw_sda);
+      //       if (isHW) po = PinOwner::HW_I2C;
+      //     }
+      //     pinManager.deallocateMultiplePins((const uint8_t *)oldPin, 2, po);
+      //     type = newType;
+      //     setup();
+      //     needsRedraw |= true;
+      //   } else {
+      //     u8x8->setBusClock(ioFrequency); // can be used for SPI too
+      //     setVcomh(contrastFix);
+      //     setContrast(contrast);
+      //     setFlipMode(flip);
+      //   }
+      //   knownHour = 99;
+      //   if (needsRedraw && !wakeDisplay()) redraw(true);
+      //   else overlayLogo(3500);
+      // }
+      // // use "return !top["newestParameter"].isNull();" when updating Usermod with new features
+      // return !top[FPSTR(_contrastFix)].isNull();
+      return false;
+    }
+
+    /**
+     * This mod ID
+     * W.o. official support, not setting one
+     **/ 
+    uint16_t getId() {return USERMOD_ID_UNSPECIFIED;}
+
   private:
-    void publishMqtt(bool bottom, const char* state);
-
-    // send sesnor values to JSON API
-    void writeSensorsToJson(JsonObject& staircase);
-    // allow overrides from JSON API
-    void readSensorsFromJson(JsonObject& staircase);
-
     void updateSegments();
-    /*
-    * Detects if an object is within ultrasound range.
-    * signalPin: The pin where the pulse is sent
-    * echoPin:   The pin where the echo is received
-    * maxTimeUs: Detection timeout in microseconds. If an echo is
-    *            received within this time, an object is detected
-    *            and the function will return true.
-    *
-    * The speed of sound is 343 meters per second at 20 degress Celcius.
-    * Since the sound has to travel back and forth, the detection
-    * distance for the sensor in cm is (0.0343 * maxTimeUs) / 2.
-    *
-    * For practical reasons, here are some useful distances:
-    *
-    * Distance =	maxtime
-    *     5 cm =  292 uS
-    *    10 cm =  583 uS
-    *    20 cm = 1166 uS
-    *    30 cm = 1749 uS
-    *    50 cm = 2915 uS
-    *   100 cm = 5831 uS
-    */
-    bool ultrasoundRead(int8_t signalPin, int8_t echoPin, unsigned int maxTimeUs);
-    bool checkSensors();
-    void autoPowerOff();
-    void updateSwipe();
     
     void enable(bool enable);
 
   private:
     /* configuration (available in API and stored in flash) */
     bool enabled = false;                   // Enable this usermod
-    unsigned long segment_delay_ms = 150;   // Time between switching each segment
-    unsigned long on_time_ms       = 30000; // The time for the light to stay on
-    int8_t topPIRorTriggerPin      = -1;    // disabled
-    int8_t bottomPIRorTriggerPin   = -1;    // disabled
-    int8_t topEchoPin              = -1;    // disabled
-    int8_t bottomEchoPin           = -1;    // disabled
-    bool useUSSensorTop            = false; // using PIR or UltraSound sensor?
-    bool useUSSensorBottom         = false; // using PIR or UltraSound sensor?
-    unsigned int topMaxDist        = 50;    // default maximum measured distance in cm, top
-    unsigned int bottomMaxDist     = 50;    // default maximum measured distance in cm, bottom
 
-    /* runtime variables */
-    bool initDone = false;
-    // Time between checking of the sensors
-    const unsigned int scanDelay = 100;
-    // Lights on or off.
-    // Flipping this will start a transition.
-    bool on = false;
-    // Swipe direction for current transition
-  #define SWIPE_UP true
-  #define SWIPE_DOWN false
-    bool swipe = SWIPE_UP;
-    // Indicates which Sensor was seen last (to determine
-    // the direction when swiping off)
-  #define LOWER false
-  #define UPPER true
-    bool lastSensor = LOWER;
-    // Time of the last transition action
-    unsigned long lastTime = 0;
-    // Time of the last sensor check
-    unsigned long lastScanTime = 0;
-    // Last time the lights were switched on or off
-    unsigned long lastSwitchTime = 0;
-    // segment id between onIndex and offIndex are on.
-    // controll the swipe by setting/moving these indices around.
-    // onIndex must be less than or equal to offIndex
-    byte onIndex = 0;
-    byte offIndex = 0;
-    // The maximum number of configured segments.
-    // Dynamically updated based on user configuration.
-    byte maxSegmentId = 1;
-    byte mainSegmentId = 0;
-    // These values are used by the API to read the
-    // last sensor state, or trigger a sensor
-    // through the API
-    bool topSensorRead     = false;
-    bool topSensorWrite    = false;
-    bool bottomSensorRead  = false;
-    bool bottomSensorWrite = false;
-    bool topSensorState    = false;
-    bool bottomSensorState = false;
     // strings to reduce flash memory usage (used more than twice)
     static const char _name[];
     static const char _enabled[];

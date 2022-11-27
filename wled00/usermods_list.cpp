@@ -11,6 +11,10 @@
  */
 //#include "../usermods/EXAMPLE_v2/usermod_v2_example.h"
 
+#ifdef USERMOD_SENS_TABLE
+  #include "../usermods/sensitive_table/sens_table.h"
+#endif
+
 #ifdef USERMOD_BATTERY_STATUS_BASIC
   #include "../usermods/battery_status_basic/usermod_v2_battery_status_basic.h"
 #endif
@@ -180,6 +184,10 @@ void registerUsermods()
    * \/ \/ \/
    */
   //usermods.add(new MyExampleUsermod());
+  #ifdef USERMOD_SENS_TABLE
+  usermods.add(new SensTable());
+  #endif
+
   #ifdef USERMOD_BATTERY_STATUS_BASIC
   usermods.add(new UsermodBatteryBasic());
   #endif
