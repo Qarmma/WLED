@@ -1,5 +1,29 @@
 #pragma once
 #include "wled.h"
+#include <Wire.h>
+
+#define UM_SENSTABLE_ID USERMOD_ID_UNSPECIFIED
+
+#define GPIO_nINT GPIO_NUM_36
+#define GPIO_SCL GPIO_NUM_2
+#define GPIO_SDA GPIO_NUM_15
+#define GPIO_LBATT GPIO_NUM_13
+#define GPIO_EXT_NB 16
+static int8_t GPIO_EXT[GPIO_EXT_NB] =
+{
+  GPIO_NUM_35, GPIO_NUM_25, GPIO_NUM_32, GPIO_NUM_26,
+  GPIO_NUM_33, GPIO_NUM_27, GPIO_NUM_23, GPIO_NUM_14,
+  GPIO_NUM_22, GPIO_NUM_21, GPIO_NUM_19, GPIO_NUM_18,
+  GPIO_NUM_5,  GPIO_NUM_17, GPIO_NUM_16, GPIO_NUM_4
+};
+#define GPIO_BTN_NB 2
+static int8_t GPIO_BTN[GPIO_BTN_NB] = {GPIO_NUM_39, GPIO_NUM_34};
+
+#define EXT_WRITE_ADDR 0x40
+
+#define DBG_ON 1
+
+
 
 /**
  * Act following onboards buttons to light a specific led
@@ -7,15 +31,29 @@
 class SensTable : public Usermod
 {
   public:
-    SensTable()
+    union TouchSens
     {
+        uint64_t val;
+        bool bit[64];
+        struct
+        {
+          bool nc[40];
+          uint8_t p2;
+          uint8_t p1;
+          uint8_t p0;
+        } Ext;
+        ~TouchSens() {}
+    };
 
-    }
+    enum SENST_MODE
+    {
+      WLED, TOUCH, OTHER
+    };
+
+
+    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20) {}
     
-    virtual ~SensTable()
-    {
-
-    }
+    virtual ~SensTable(){}
 
     /**
      * Setup board IOs and init extender (nothing network related !)
@@ -23,7 +61,40 @@ class SensTable : public Usermod
      **/
     void setup()
     {
+      PinOwner po = PinOwner::None;
+      uint8_t i;
 
+      // Buttons (inverted polarity)
+      // Maybe use the handleButton function, have to check if the init here is required or may inmterfere with allocation
+      PinManagerPinType btn_pins[GPIO_BTN_NB];
+      for(i = 0; i<GPIO_BTN_NB; i++){btn_pins[i] = {GPIO_BTN[i], true};}
+      if(!pinManager.allocateMultiplePins(btn_pins, GPIO_BTN_NB, po)) assert(0);
+      for(i = 0; i<GPIO_BTN_NB; i++)
+      {
+        esp_sleep_enable_ext0_wakeup(gpio_num_t(GPIO_BTN[i]), 0);
+      }
+
+      // Ext pins
+      PinManagerPinType ext_pins[GPIO_EXT_NB];
+      for(i = 0; i<GPIO_EXT_NB; i++){ext_pins[i] = {GPIO_EXT[i], true};}
+      if(!pinManager.allocateMultiplePins(ext_pins, GPIO_EXT_NB, po)) assert(0);
+      for(i = 0; i<GPIO_EXT_NB; i++)
+      {
+        pinMode(GPIO_EXT[i], INPUT_PULLDOWN);
+        esp_sleep_enable_ext0_wakeup(gpio_num_t(GPIO_EXT[i]), 1);
+      }
+
+      // Extender
+        // Ext interrupt (inverted polarity)
+      if(!pinManager.allocatePin(GPIO_nINT, DBG_ON, po)) assert(0);
+      pinMode(GPIO_nINT, INPUT_PULLUP);
+      esp_sleep_enable_ext0_wakeup(GPIO_nINT, 0);
+        // IOs
+      this->_hasExtender = _setupExtender(GPIO_SCL, GPIO_SDA, po);
+
+      // Lowbatt
+      if(!pinManager.allocatePin(GPIO_LBATT, DBG_ON, po)) assert(0);
+      pinMode(GPIO_LBATT, INPUT_PULLDOWN);
     }
 
     /**
@@ -31,7 +102,26 @@ class SensTable : public Usermod
      **/ 
     void loop()
     {
-      
+      static unsigned long time = 0, now;
+
+      if(strip.isUpdating() || this->_mode == SENST_MODE::TOUCH) return;
+
+      now = millis();
+      if(now < time) return;
+      time = now + _updateIntervalMS;
+
+      // Check if is in "detect mode"
+      if(this->_mode == SENST_MODE::TOUCH)
+      {
+        // Check any press
+        if(digitalRead(GPIO_nINT))
+        {
+          _readExt();
+        }
+        // Check direct wiring
+
+        // Adapt color to it
+      }
     }
 
     /**
@@ -39,58 +129,18 @@ class SensTable : public Usermod
      **/ 
     bool handleButton(uint8_t b)
     {
-      return false;
-    }
-
-    /**
-     * ???
-     **/
-    void appendConfigData()
-    {
-      oappend(SET_F("dd=addDropdown('Sensitive table','type');"));
-      oappend(SET_F("addOption(dd,'None',0);"));
-      oappend(SET_F("addOption(dd,'SSD1306',1);"));
-      oappend(SET_F("addOption(dd,'SH1106',2);"));
-      oappend(SET_F("addOption(dd,'SSD1306 128x64',3);"));
-      oappend(SET_F("addOption(dd,'SSD1305',4);"));
-      oappend(SET_F("addOption(dd,'SSD1305 128x64',5);"));
-      oappend(SET_F("addOption(dd,'SSD1306 SPI',6);"));
-      oappend(SET_F("addOption(dd,'SSD1306 SPI 128x64',7);"));
-      oappend(SET_F("addInfo('4LineDisplay:pin[]',0,'<i>-1 use global</i>','I2C/SPI CLK');"));
-      oappend(SET_F("addInfo('4LineDisplay:pin[]',1,'<i>-1 use global</i>','I2C/SPI DTA');"));
-      oappend(SET_F("addInfo('4LineDisplay:pin[]',2,'','SPI CS');"));
-      oappend(SET_F("addInfo('4LineDisplay:pin[]',3,'','SPI DC');"));
-      oappend(SET_F("addInfo('4LineDisplay:pin[]',4,'','SPI RST');"));
-    }
-    
-    /*
-     * addToJsonInfo() can be used to add custom entries to the /json/info part of the JSON API.
-     * Creating an "u" object allows you to add custom key/value pairs to the Info section of the WLED web UI.
-     * Below it is shown how this could be used for e.g. a light sensor
-     */
-    void addToJsonInfo(JsonObject& root)
-    {
-      //JsonObject user = root["u"];
-      //if (user.isNull()) user = root.createNestedObject("u");
-      //JsonArray data = user.createNestedArray(F("4LineDisplay"));
-      //data.add(F("Loaded."));
-    }
-
-    /*
-     * addToJsonState() can be used to add custom entries to the /json/state part of the JSON API (state object).
-     * Values in the state object may be modified by connected clients
-     */
-    void addToJsonState(JsonObject& root)
-    {
-    }
-
-    /*
-     * readFromJsonState() can be used to receive data clients send to the /json/state part of the JSON API (state object).
-     * Values in the state object may be modified by connected clients
-     */
-    void readFromJsonState(JsonObject& root)
-    {
-    //  if (!initDone) return;  // prevent crash on boot applyPreset()
+      if(buttonType[b] != BTN_TYPE_PUSH) return 0;
+      switch(b)
+      {
+        // Btn 0 switches working mode
+        case 0:
+            if(this->_mode == SENST_MODE::TOUCH) this->_mode == SENST_MODE::WLED;
+            else if(this->_mode == SENST_MODE::WLED) this->_mode == SENST_MODE::TOUCH;
+          break;
+        default:
+          break;
+      }
+      return 1;
     }
 
     /*
@@ -99,120 +149,21 @@ class SensTable : public Usermod
      * addToConfig() will also not yet add your setting to one of the settings pages automatically.
      * To make that work you still have to add the setting to the HTML, xml.cpp and set.cpp manually.
      */
-    void addToConfig(JsonObject& obj)
+    void addToConfig(JsonObject& root)
     {
-      // // determine if we are using global HW pins (data & clock)
-      // int8_t hw_dta, hw_clk;
-      // if ((type == SSD1306_SPI || type == SSD1306_SPI64)) {
-      //   hw_clk = spi_sclk<0 ? HW_PIN_CLOCKSPI : spi_sclk;
-      //   hw_dta = spi_mosi<0 ? HW_PIN_DATASPI : spi_mosi;
-      // } else {
-      //   hw_clk = i2c_scl<0 ? HW_PIN_SCL : i2c_scl;
-      //   hw_dta = i2c_sda<0 ? HW_PIN_SDA : i2c_sda;
-      // }
-
-      // JsonObject top   = root.createNestedObject(FPSTR(_name));
-      // top[FPSTR(_enabled)]       = enabled;
-
-      // JsonArray io_pin = top.createNestedArray("pin");
-      // for (int i=0; i<5; i++) {
-      //   if      (i==0 && ioPin[i]==hw_clk) io_pin.add(-1); // do not store global HW pin
-      //   else if (i==1 && ioPin[i]==hw_dta) io_pin.add(-1); // do not store global HW pin
-      //   else                               io_pin.add(ioPin[i]);
-      // }
-      // top["type"]                = type;
-      // top[FPSTR(_flip)]          = (bool) flip;
-      // top[FPSTR(_contrast)]      = contrast;
-      // top[FPSTR(_contrastFix)]   = (bool) contrastFix;
-      // #ifndef ARDUINO_ARCH_ESP32
-      // top[FPSTR(_refreshRate)]   = refreshRate;
-      // #endif
-      // top[FPSTR(_screenTimeOut)] = screenTimeout/1000;
-      // top[FPSTR(_sleepMode)]     = (bool) sleepMode;
-      // top[FPSTR(_clockMode)]     = (bool) clockMode;
-      // top[FPSTR(_showSeconds)]   = (bool) showSeconds;
-      // top[FPSTR(_busClkFrequency)] = ioFrequency/1000;
-      // DEBUG_PRINTLN(F("4 Line Display config saved."));
+      JsonObject top = root.createNestedObject(FPSTR(_name));
+      top[FPSTR(_sensUpdIntervalMS)] = _updateIntervalMS;
     }
 
     /*
      * Read from flash persistent data
      */
-    bool readFromConfig(JsonObject& obj)
+    bool readFromConfig(JsonObject& root)
     {
-      // bool needsRedraw    = false;
-      // DisplayType newType = type;
-      // int8_t oldPin[5]; for (byte i=0; i<5; i++) oldPin[i] = ioPin[i];
-
-      // JsonObject top = root[FPSTR(_name)];
-      // if (top.isNull()) {
-      //   DEBUG_PRINT(FPSTR(_name));
-      //   DEBUG_PRINTLN(F(": No config found. (Using defaults.)"));
-      //   return false;
-      // }
-
-      // enabled       = top[FPSTR(_enabled)] | enabled;
-      // newType       = top["type"] | newType;
-      // for (byte i=0; i<5; i++) ioPin[i] = top["pin"][i] | ioPin[i];
-      // flip          = top[FPSTR(_flip)] | flip;
-      // contrast      = top[FPSTR(_contrast)] | contrast;
-      // #ifndef ARDUINO_ARCH_ESP32
-      // refreshRate   = top[FPSTR(_refreshRate)] | refreshRate;
-      // refreshRate   = min(5000, max(250, (int)refreshRate));
-      // #endif
-      // screenTimeout = (top[FPSTR(_screenTimeOut)] | screenTimeout/1000) * 1000;
-      // sleepMode     = top[FPSTR(_sleepMode)] | sleepMode;
-      // clockMode     = top[FPSTR(_clockMode)] | clockMode;
-      // showSeconds   = top[FPSTR(_showSeconds)] | showSeconds;
-      // contrastFix   = top[FPSTR(_contrastFix)] | contrastFix;
-      // if (newType == SSD1306_SPI || newType == SSD1306_SPI64)
-      //   ioFrequency = min(20000, max(500, (int)(top[FPSTR(_busClkFrequency)] | ioFrequency/1000))) * 1000;  // limit frequency
-      // else
-      //   ioFrequency = min(3400, max(100, (int)(top[FPSTR(_busClkFrequency)] | ioFrequency/1000))) * 1000;  // limit frequency
-
-      // DEBUG_PRINT(FPSTR(_name));
-      // if (!initDone) {
-      //   // first run: reading from cfg.json
-      //   type = newType;
-      //   DEBUG_PRINTLN(F(" config loaded."));
-      // } else {
-      //   DEBUG_PRINTLN(F(" config (re)loaded."));
-      //   // changing parameters from settings page
-      //   bool pinsChanged = false;
-      //   for (byte i=0; i<5; i++) if (ioPin[i] != oldPin[i]) { pinsChanged = true; break; }
-      //   if (pinsChanged || type!=newType) {
-      //     if (type != NONE) delete u8x8;
-      //     PinOwner po = PinOwner::UM_FourLineDisplay;
-      //     bool isSPI = (type == SSD1306_SPI || type == SSD1306_SPI64);
-      //     if (isSPI) {
-      //       pinManager.deallocateMultiplePins((const uint8_t *)(&oldPin[2]), 3, po);
-      //       uint8_t hw_sclk = spi_sclk<0 ? HW_PIN_CLOCKSPI : spi_sclk;
-      //       uint8_t hw_mosi = spi_mosi<0 ? HW_PIN_DATASPI : spi_mosi;
-      //       bool isHW = (oldPin[0]==hw_sclk && oldPin[1]==hw_mosi);
-      //       if (isHW) po = PinOwner::HW_SPI;
-      //     } else {
-      //       uint8_t hw_scl = i2c_scl<0 ? HW_PIN_SCL : i2c_scl;
-      //       uint8_t hw_sda = i2c_sda<0 ? HW_PIN_SDA : i2c_sda;
-      //       bool isHW = (oldPin[0]==hw_scl && oldPin[1]==hw_sda);
-      //       if (isHW) po = PinOwner::HW_I2C;
-      //     }
-      //     pinManager.deallocateMultiplePins((const uint8_t *)oldPin, 2, po);
-      //     type = newType;
-      //     setup();
-      //     needsRedraw |= true;
-      //   } else {
-      //     u8x8->setBusClock(ioFrequency); // can be used for SPI too
-      //     setVcomh(contrastFix);
-      //     setContrast(contrast);
-      //     setFlipMode(flip);
-      //   }
-      //   knownHour = 99;
-      //   if (needsRedraw && !wakeDisplay()) redraw(true);
-      //   else overlayLogo(3500);
-      // }
-      // // use "return !top["newestParameter"].isNull();" when updating Usermod with new features
-      // return !top[FPSTR(_contrastFix)].isNull();
-      return false;
+      JsonObject top = root[FPSTR(_name)];
+      if (top.isNull()) return 0;
+      _updateIntervalMS = top[FPSTR(_sensUpdIntervalMS)];
+      return 1;
     }
 
     /**
@@ -222,25 +173,48 @@ class SensTable : public Usermod
     uint16_t getId() {return USERMOD_ID_UNSPECIFIED;}
 
   private:
-    void updateSegments();
-    
-    void enable(bool enable);
+    /**
+     * Setup extender while trying to reach it
+     */
+    bool _setupExtender(int8_t scl_pin, int8_t sda_pin, PinOwner& po)
+    {
+      PinManagerPinType pins[2] = { { scl_pin, true }, { sda_pin, true } };
+      if (!pinManager.allocateMultiplePins(pins, 2, po)) assert(0);
+      Wire.begin(GPIO_SDA,GPIO_SCL,1000000);
+      Wire.beginTransmission(EXT_WRITE_ADDR);
+      if(Wire.endTransmission() != 0)
+      {
+        pinManager.deallocateMultiplePins(pins, 2, po);
+        return 0;
+      }
+      // Found extender, read once
+      _readExt();
+      return 1;
+    }
+
+    bool _readExt()
+    {
+      static uint8_t vals[3] = {0};
+
+      if(!_hasExtender) return 0;
+      Wire.readBytes(vals, 3); // not checking how many bytes received
+      this->_touch.Ext.p0 = vals[0];
+      this->_touch.Ext.p1 = vals[1];
+      this->_touch.Ext.p2 = vals[2];
+      return 1;
+    }
 
   private:
-    /* configuration (available in API and stored in flash) */
-    bool enabled = false;                   // Enable this usermod
+    // If extender could be reached and can be used
+    bool _hasExtender;
+    TouchSens _touch;
+    SENST_MODE _mode;
+    uint32_t _updateIntervalMS;
 
     // strings to reduce flash memory usage (used more than twice)
     static const char _name[];
-    static const char _enabled[];
-    static const char _segmentDelay[];
-    static const char _onTime[];
-    static const char _useTopUltrasoundSensor[];
-    static const char _topPIRorTrigger_pin[];
-    static const char _topEcho_pin[];
-    static const char _useBottomUltrasoundSensor[];
-    static const char _bottomPIRorTrigger_pin[];
-    static const char _bottomEcho_pin[];
-    static const char _topEchoCm[];
-    static const char _bottomEchoCm[];
+    static const char _sensUpdIntervalMS[];
 };
+
+const char SensTable::_name[] PROGMEM = "Sensitive Table";
+const char SensTable::_sensUpdIntervalMS[] PROGMEM = "Sensors update interval [ms]";
