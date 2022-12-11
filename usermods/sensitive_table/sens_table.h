@@ -19,7 +19,7 @@ static int8_t GPIO_EXT[GPIO_EXT_NB] =
 #define GPIO_BTN_NB 2
 static int8_t GPIO_BTN[GPIO_BTN_NB] = {GPIO_NUM_39, GPIO_NUM_34};
 
-#define EXT_WRITE_ADDR 0x40
+#define EXT_I2C_ADDR (0x40 >> 1)
 
 #define DBG_ON 1
 
@@ -37,10 +37,11 @@ class SensTable : public Usermod
         bool bit[64];
         struct
         {
-          bool nc[40];
+          bool ncH[22];
           uint8_t p2;
           uint8_t p1;
           uint8_t p0;
+          bool ncL[18];
         } Ext;
         ~TouchSens() {}
     };
@@ -51,7 +52,7 @@ class SensTable : public Usermod
     };
 
 
-    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20) {}
+    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsTimeoutMS(1500) {}
     
     virtual ~SensTable(){}
 
@@ -104,25 +105,46 @@ class SensTable : public Usermod
     {
       static unsigned long time = 0, now;
 
-      if(strip.isUpdating() || this->_mode == SENST_MODE::TOUCH) return;
-
-      now = millis();
-      if(now < time) return;
-      time = now + _updateIntervalMS;
-
       // Check if is in "detect mode"
       if(this->_mode == SENST_MODE::TOUCH)
       {
+        if(strip.isUpdating() || this->_mode == SENST_MODE::TOUCH) return;
+
+        now = millis();
+        if(now < time) return;
+        time = now + this->_updateIntervalMS;
+
         // Check any press
         if(digitalRead(GPIO_nINT))
         {
           _readExt();
         }
         // Check direct wiring
-
-        // Adapt color to it
+        for(uint8_t i = 0; i < GPIO_EXT_NB; i++)
+        {
+          this->_touch.bit[i] = digitalRead(GPIO_EXT[i]);
+        }
+        // Adapt color and times to it
+        for(uint8_t i = 0; i < 40; i++)
+        {
+          // Register touch
+          if(this->_touch.bit[i]){this->_leds_time[i] = now + this->_ledsOffTimeoutMS;}
+          // Act on touch/no touch
+          if(this->_leds_time[i] > now){strip.setPixelColor(i, strip._colors_t[0]);}
+          else {strip.setPixelColor(i, 0);}
+        }
       }
     }
+
+    /*
+     * handleOverlayDraw() is called just before every show() (LED strip update frame) after effects have set the colors.
+     * Use this to blank out some LEDs or set them to a different color regardless of the set effect mode.
+     * Commonly used for custom clocks (Cronixie, 7 segment)
+     */
+    //void handleOverlayDraw()
+    //{
+      //strip.setPixelColor(0, RGBW32(0,0,0,0)) // set the first pixel to black
+    //}
 
     /**
      * Handle user buttons (i.e. one of the 4 set on the web UI)
@@ -144,6 +166,24 @@ class SensTable : public Usermod
     }
 
     /*
+     * addToJsonInfo() can be used to add custom entries to the /json/info part of the JSON API.
+     * Creating an "u" object allows you to add custom key/value pairs to the Info section of the WLED web UI.
+     * Below it is shown how this could be used for e.g. a light sensor
+     */
+    void addToJsonInfo(JsonObject& root)
+    {
+      JsonObject top = root[FPSTR(_name)];
+      if(top.isNull()) top = root.createNestedObject(FPSTR(_name));
+      
+      JsonArray lightArr = top.createNestedArray(FPSTR(_sensUpdIntervalMS)); //name
+      lightArr.add(_sensUpdIntervalMS); //value
+      lightArr.add(" [ms]"); //unit
+      JsonArray lightArr = top.createNestedArray(FPSTR(_ledsTimeoutMS)); //name
+      lightArr.add(_ledsOffTimeoutMS); //value
+      lightArr.add(" [ms]"); //unit
+    }
+
+    /*
      * Register in flash for persistent data
      *
      * addToConfig() will also not yet add your setting to one of the settings pages automatically.
@@ -151,8 +191,10 @@ class SensTable : public Usermod
      */
     void addToConfig(JsonObject& root)
     {
-      JsonObject top = root.createNestedObject(FPSTR(_name));
+      JsonObject top = root[FPSTR(_name)];
+      if(top.isNull()) top = root.createNestedObject(FPSTR(_name));
       top[FPSTR(_sensUpdIntervalMS)] = _updateIntervalMS;
+      top[FPSTR(_ledsTimeoutMS)] = _ledsOffTimeoutMS;
     }
 
     /*
@@ -162,7 +204,8 @@ class SensTable : public Usermod
     {
       JsonObject top = root[FPSTR(_name)];
       if (top.isNull()) return 0;
-      _updateIntervalMS = top[FPSTR(_sensUpdIntervalMS)];
+      getJsonValue(top[FPSTR(_sensUpdIntervalMS)], _updateIntervalMS, _updateIntervalMS);
+      getJsonValue(top[FPSTR(_ledsTimeoutMS)], _ledsOffTimeoutMS, _ledsOffTimeoutMS);
       return 1;
     }
 
@@ -181,7 +224,7 @@ class SensTable : public Usermod
       PinManagerPinType pins[2] = { { scl_pin, true }, { sda_pin, true } };
       if (!pinManager.allocateMultiplePins(pins, 2, po)) assert(0);
       Wire.begin(GPIO_SDA,GPIO_SCL,1000000);
-      Wire.beginTransmission(EXT_WRITE_ADDR);
+      Wire.beginTransmission(EXT_I2C_ADDR);
       if(Wire.endTransmission() != 0)
       {
         pinManager.deallocateMultiplePins(pins, 2, po);
@@ -197,6 +240,7 @@ class SensTable : public Usermod
       static uint8_t vals[3] = {0};
 
       if(!_hasExtender) return 0;
+      Wire.requestFrom(EXT_I2C_ADDR,3); 
       Wire.readBytes(vals, 3); // not checking how many bytes received
       this->_touch.Ext.p0 = vals[0];
       this->_touch.Ext.p1 = vals[1];
@@ -210,11 +254,15 @@ class SensTable : public Usermod
     TouchSens _touch;
     SENST_MODE _mode;
     uint32_t _updateIntervalMS;
+    uint32_t _ledsOffTimeoutMS;
+    time_t _leds_time[40];
 
     // strings to reduce flash memory usage (used more than twice)
     static const char _name[];
     static const char _sensUpdIntervalMS[];
+    static const char _ledsTimeoutMS[];
 };
 
 const char SensTable::_name[] PROGMEM = "Sensitive Table";
 const char SensTable::_sensUpdIntervalMS[] PROGMEM = "Sensors update interval [ms]";
+const char SensTable::_ledsTimeoutMS[] PROGMEM = "Leds timeout [ms]";
