@@ -52,7 +52,7 @@ class SensTable : public Usermod
     };
 
 
-    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsTimeoutMS(1500) {}
+    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsOffTimeoutMS(1500) {}
     
     virtual ~SensTable(){}
 
@@ -156,8 +156,8 @@ class SensTable : public Usermod
       {
         // Btn 0 switches working mode
         case 0:
-            if(this->_mode == SENST_MODE::TOUCH) this->_mode == SENST_MODE::WLED;
-            else if(this->_mode == SENST_MODE::WLED) this->_mode == SENST_MODE::TOUCH;
+            if(this->_mode == SENST_MODE::TOUCH)this->_mode = SENST_MODE::WLED;
+            else if(this->_mode == SENST_MODE::WLED)this->_mode = SENST_MODE::TOUCH;
           break;
         default:
           break;
@@ -175,12 +175,12 @@ class SensTable : public Usermod
       JsonObject top = root[FPSTR(_name)];
       if(top.isNull()) top = root.createNestedObject(FPSTR(_name));
       
-      JsonArray lightArr = top.createNestedArray(FPSTR(_sensUpdIntervalMS)); //name
-      lightArr.add(_sensUpdIntervalMS); //value
-      lightArr.add(" [ms]"); //unit
-      JsonArray lightArr = top.createNestedArray(FPSTR(_ledsTimeoutMS)); //name
-      lightArr.add(_ledsOffTimeoutMS); //value
-      lightArr.add(" [ms]"); //unit
+      JsonArray senstArr = top.createNestedArray(FPSTR(_sensUpdIntervalMS)); //name
+      senstArr.add(_sensUpdIntervalMS); //value
+      senstArr.add(" [ms]"); //unit
+      JsonArray ledstArr = top.createNestedArray(FPSTR(_ledsTimeoutMS)); //name
+      ledstArr.add(_ledsOffTimeoutMS); //value
+      ledstArr.add(" [ms]"); //unit
     }
 
     /*
