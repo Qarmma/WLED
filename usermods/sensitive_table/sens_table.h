@@ -52,7 +52,7 @@ class SensTable : public Usermod
     };
 
 
-    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsOffTimeoutMS(1500) {}
+    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::TOUCH), _updateIntervalMS(20), _ledsOffTimeoutMS(1500) {}
     
     virtual ~SensTable(){}
 
@@ -151,6 +151,12 @@ class SensTable : public Usermod
      **/ 
     bool handleButton(uint8_t b)
     {
+      if(isButtonPressed(b))
+      {
+        DEBUG_PRINT("Button pressed :");
+        DEBUG_PRINT(b);
+        DEBUG_PRINTLN();
+      }
       if(buttonType[b] != BTN_TYPE_PUSH) return 0;
       switch(b)
       {
