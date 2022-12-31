@@ -24,6 +24,10 @@ static int8_t GPIO_BTN[GPIO_BTN_NB] = {GPIO_NUM_39, GPIO_NUM_34};
 #define DBG_ON 1
 
 
+#define PRINT(x) DEBUGOUT.print(x)
+#define PRINTLN(x) DEBUGOUT.println(x)
+#define PRINTF(x...) DEBUGOUT.printf(x)
+
 
 /**
  * Act following onboards buttons to light a specific led
@@ -37,11 +41,11 @@ class SensTable : public Usermod
         bool bit[64];
         struct
         {
-          bool ncH[22];
+          bool ncH[24];
           uint8_t p2;
           uint8_t p1;
           uint8_t p0;
-          bool ncL[18];
+          bool ncL[16];
         } Ext;
         ~TouchSens() {}
     };
@@ -51,8 +55,24 @@ class SensTable : public Usermod
       WLED, TOUCH, OTHER
     };
 
+    #define BINSZ (45)
+    void inAsBin(TouchSens* t, char b[BINSZ])
+    {
+      uint8_t nt = 0;
+      for(uint8_t i = 0; i < 40; i++)
+      {
+        if(i != 0 && i%8==0)
+        {
+          b[BINSZ - 2 - i - nt] = '\'';
+          nt ++;
+        }
+        b[BINSZ - 2 - i - nt] = t->bit[i] ? '1':'0';
+      }
+      b[BINSZ-1] = '\0';
+    }
 
-    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::TOUCH), _updateIntervalMS(20), _ledsOffTimeoutMS(1500) {}
+
+    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsOffTimeoutMS(1500), _ledsFadeMS(500), _leds_ctrl{0} {}
     
     virtual ~SensTable(){}
 
@@ -62,6 +82,8 @@ class SensTable : public Usermod
      **/
     void setup()
     {
+      if(esp_reset_reason() != esp_reset_reason_t::ESP_RST_SW) { delay(6000); }
+      PRINTLN("SensTable mod setting up");
       PinOwner po = PinOwner::None;
       uint8_t i;
 
@@ -69,7 +91,10 @@ class SensTable : public Usermod
       // Maybe use the handleButton function, have to check if the init here is required or may inmterfere with allocation
       PinManagerPinType btn_pins[GPIO_BTN_NB];
       for(i = 0; i<GPIO_BTN_NB; i++){btn_pins[i] = {GPIO_BTN[i], true};}
-      if(!pinManager.allocateMultiplePins(btn_pins, GPIO_BTN_NB, po)) assert(0);
+      if(!pinManager.allocateMultiplePins(btn_pins, GPIO_BTN_NB, po))
+      {
+        PRINTLN(" *** Could not allocate touch pins");
+      }
       for(i = 0; i<GPIO_BTN_NB; i++)
       {
         esp_sleep_enable_ext0_wakeup(gpio_num_t(GPIO_BTN[i]), 0);
@@ -78,7 +103,10 @@ class SensTable : public Usermod
       // Ext pins
       PinManagerPinType ext_pins[GPIO_EXT_NB];
       for(i = 0; i<GPIO_EXT_NB; i++){ext_pins[i] = {GPIO_EXT[i], true};}
-      if(!pinManager.allocateMultiplePins(ext_pins, GPIO_EXT_NB, po)) assert(0);
+      if(!pinManager.allocateMultiplePins(ext_pins, GPIO_EXT_NB, po))
+      {
+        PRINTLN(" *** Could not allocate ext. touch pins");
+      }
       for(i = 0; i<GPIO_EXT_NB; i++)
       {
         pinMode(GPIO_EXT[i], INPUT_PULLDOWN);
@@ -87,52 +115,73 @@ class SensTable : public Usermod
 
       // Extender
         // Ext interrupt (inverted polarity)
-      if(!pinManager.allocatePin(GPIO_nINT, DBG_ON, po)) assert(0);
+      if(!pinManager.allocatePin(GPIO_nINT, DBG_ON, po))
+      {
+        PRINTLN(" *** Could not allocate ext. intr. pin");
+      }
       pinMode(GPIO_nINT, INPUT_PULLUP);
       esp_sleep_enable_ext0_wakeup(GPIO_nINT, 0);
         // IOs
-      this->_hasExtender = _setupExtender(GPIO_SCL, GPIO_SDA, po);
+      _setupExtender(GPIO_SCL, GPIO_SDA, po);
 
       // Lowbatt
-      if(!pinManager.allocatePin(GPIO_LBATT, DBG_ON, po)) assert(0);
+      if(!pinManager.allocatePin(GPIO_LBATT, DBG_ON, po))
+      {
+        PRINTLN(" *** Could not allocate low batt. pin");
+      }
       pinMode(GPIO_LBATT, INPUT_PULLDOWN);
     }
 
     /**
      * Work loop
      **/ 
+    unsigned long now;
     void loop()
     {
-      static unsigned long time = 0, now;
-
+      static unsigned long time = 0;
+      static bool anychange;
+      
       // Check if is in "detect mode"
       if(this->_mode == SENST_MODE::TOUCH)
       {
-        if(strip.isUpdating() || this->_mode == SENST_MODE::TOUCH) return;
+        if(strip.isUpdating()) return;
+        anychange = 0;
 
         now = millis();
         if(now < time) return;
         time = now + this->_updateIntervalMS;
 
         // Check any press
-        if(digitalRead(GPIO_nINT))
+        PRINT("nINT = ");
+        PRINTLN(digitalRead(GPIO_nINT));
+        if(!digitalRead(GPIO_nINT))
         {
-          _readExt();
+          PRINTLN(" ** Reading exts");
+          anychange &= _readExt();
         }
         // Check direct wiring
         for(uint8_t i = 0; i < GPIO_EXT_NB; i++)
         {
-          this->_touch.bit[i] = digitalRead(GPIO_EXT[i]);
+          static bool r;
+          r = digitalRead(GPIO_EXT[i]);
+          if(r != this->_touch.bit[i])
+          {
+            this->_leds_ctrl.time[i] = r ? now : now + _ledsOffTimeoutMS;
+            anychange |= 1;
+          }
+          this->_touch.bit[i] = r;
         }
-        // Adapt color and times to it
-        for(uint8_t i = 0; i < 40; i++)
+        
+        if(anychange)
         {
-          // Register touch
-          if(this->_touch.bit[i]){this->_leds_time[i] = now + this->_ledsOffTimeoutMS;}
-          // Act on touch/no touch
-          if(this->_leds_time[i] > now){strip.setPixelColor(i, strip._colors_t[0]);}
-          else {strip.setPixelColor(i, 0);}
+          strip.trigger();  // force strip refresh
         }
+
+        // DBG
+        static char b[BINSZ];
+        inAsBin(&this->_touch, b);
+        PRINTLN(b);
+        PRINTLN();
       }
     }
 
@@ -141,10 +190,54 @@ class SensTable : public Usermod
      * Use this to blank out some LEDs or set them to a different color regardless of the set effect mode.
      * Commonly used for custom clocks (Cronixie, 7 segment)
      */
-    //void handleOverlayDraw()
-    //{
-      //strip.setPixelColor(0, RGBW32(0,0,0,0)) // set the first pixel to black
-    //}
+    void handleOverlayDraw()
+    {
+      if(this->_mode == SENST_MODE::TOUCH)
+      {
+        // Adapt color and on times
+        for(uint8_t i = 0; i < 40; i++)
+        {
+          // on
+          if(this->_touch.bit[i])
+          {
+            // fading
+            if(now - this->_leds_ctrl.time[i] < this->_ledsFadeMS)
+            {
+              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8(255 - (now - this->_leds_ctrl.time[i]) / this->_ledsFadeMS));
+            }
+            // else still -> let color as is
+          }
+          // off
+          else
+          {
+            // still timeout (need this not to trigger fading too fast)
+            if(now < this->_leds_ctrl.time[i]){}
+            // fade
+            else if(now - this->_ledsFadeMS < this->_leds_ctrl.time[i])
+            {
+              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8((now - this->_leds_ctrl.time[i]) / this->_ledsFadeMS));
+            }
+            else
+            {
+              strip.setPixelColor(i, 0);
+            }
+          }
+
+          // Register touch
+          // if(this->_touch.bit[i]){this->_leds_time[i] = now + this->_ledsOffTimeoutMS + this->_ledsFadeMS*2;}
+          // Act on touch/no touch
+          // if(this->_leds_time[i] > now)
+          // {
+          //   //strip.setPixelColor(i, strip.getPixelColor(i));//strip._colors_t[0]);
+          // }
+          // else
+          // {
+          //   //strip.setPixelColor(i, 0);
+          //   strip.setPixelColor(i, 0);
+          // }
+        }
+      }
+    }
 
     /**
      * Handle user buttons (i.e. one of the 4 set on the web UI)
@@ -156,25 +249,34 @@ class SensTable : public Usermod
       if(isButtonPressed(b) && pressed[b] == 0)
       {
         pressed[b] = 1;
-        DEBUG_PRINT("Button pressed :");
-        DEBUG_PRINTLN(b);
+        PRINT("Button pressed : ");
+        PRINTLN(b);
+        switch(b)
+        {
+          // Btn 0 switches working mode
+          case 0:
+              if(this->_mode == SENST_MODE::TOUCH)
+              {
+                PRINTLN(" * Setting mode to WLED");
+                this->_mode = SENST_MODE::WLED;
+              }
+              else if(this->_mode == SENST_MODE::WLED)
+              {
+                PRINTLN(" * Setting mode to TOUCH");
+                this->_mode = SENST_MODE::TOUCH;
+              }
+            break;
+           case 1:
+             esp_restart();
+          default:
+            return 0;
+            break;
+        }
       }
       else if(!isButtonPressed(b) && pressed[b] == 1)
       {
         pressed[b] = 0;
-        DEBUG_PRINT("Button released :");
-        DEBUG_PRINTLN(b);
-      }
-      return 1;
-      switch(b)
-      {
-        // Btn 0 switches working mode
-        case 0:
-            if(this->_mode == SENST_MODE::TOUCH)this->_mode = SENST_MODE::WLED;
-            else if(this->_mode == SENST_MODE::WLED)this->_mode = SENST_MODE::TOUCH;
-          break;
-        default:
-          break;
+        return 1; // exit, except if we may do something with this
       }
       return 1;
     }
@@ -195,6 +297,9 @@ class SensTable : public Usermod
       JsonArray ledstArr = top.createNestedArray(FPSTR(_ledsTimeoutMS)); //name
       ledstArr.add(_ledsOffTimeoutMS); //value
       ledstArr.add(" [ms]"); //unit
+      JsonArray lfarr = top.createNestedArray(FPSTR(_ledsFadeTimeMS)); //name
+      lfarr.add(_ledsFadeMS); //value
+      lfarr.add(" [ms]"); //
     }
 
     /*
@@ -209,6 +314,7 @@ class SensTable : public Usermod
       if(top.isNull()) top = root.createNestedObject(FPSTR(_name));
       top[FPSTR(_sensUpdIntervalMS)] = _updateIntervalMS;
       top[FPSTR(_ledsTimeoutMS)] = _ledsOffTimeoutMS;
+      top[FPSTR(_ledsFadeTimeMS)] = _ledsFadeMS;
     }
 
     /*
@@ -220,6 +326,7 @@ class SensTable : public Usermod
       if (top.isNull()) return 0;
       getJsonValue(top[FPSTR(_sensUpdIntervalMS)], _updateIntervalMS, _updateIntervalMS);
       getJsonValue(top[FPSTR(_ledsTimeoutMS)], _ledsOffTimeoutMS, _ledsOffTimeoutMS);
+      getJsonValue(top[FPSTR(_ledsFadeTimeMS)], _ledsFadeMS, _ledsFadeMS);
       return 1;
     }
 
@@ -235,31 +342,68 @@ class SensTable : public Usermod
      */
     bool _setupExtender(int8_t scl_pin, int8_t sda_pin, PinOwner& po)
     {
+      PRINTLN(" * Setting up extender");
       PinManagerPinType pins[2] = { { scl_pin, true }, { sda_pin, true } };
-      if (!pinManager.allocateMultiplePins(pins, 2, po)) assert(0);
+      if (!pinManager.allocateMultiplePins(pins, 2, po))
+      {
+        PRINTLN("  *** Could not allocate I2C pins");
+      }
       Wire.begin(GPIO_SDA,GPIO_SCL,1000000);
       Wire.beginTransmission(EXT_I2C_ADDR);
-      if(Wire.endTransmission() != 0)
+      static uint8_t tw[3] = {0xFF};
+      Wire.write(tw,3);
+      if(Wire.endTransmission() != I2C_ERROR_OK)
       {
+        PRINTLN("  ** I2C extender not found");
         pinManager.deallocateMultiplePins(pins, 2, po);
+        this->_hasExtender = 0;
         return 0;
       }
-      // Found extender, read once
-      _readExt();
+      PRINTLN("  ** I2C extender found");
+      this->_hasExtender = 1;
       return 1;
     }
 
     bool _readExt()
     {
       static uint8_t vals[3] = {0};
-
-      if(!_hasExtender) return 0;
+      if(!this->_hasExtender) { return 0; }
+      PRINTLN("EXTERNAL READ !");
       Wire.requestFrom(EXT_I2C_ADDR,3); 
       Wire.readBytes(vals, 3); // not checking how many bytes received
+      bool b = 0;
+      uint8_t* p;
+      for(uint8_t j = 0; j<3; j++)
+      {
+        switch(j)
+        {
+          case 0:
+            p = &this->_touch.Ext.p0;
+            break;
+          case 1:
+            p = &this->_touch.Ext.p1;
+            break;
+          case 2:
+            p = &this->_touch.Ext.p2;
+            break;
+          default:
+            break;
+        }
+        for(uint8_t i = 0; i < 8; i++)
+        {
+          static bool r;
+          r = *p & (1 << i);
+          if(r != this->_touch.bit[16 + i + j*8])
+          {
+            this->_leds_ctrl.time[16 + i + j*8] = r ? now : now + _ledsOffTimeoutMS;
+            b |= 1;
+          }
+        }
+      }
       this->_touch.Ext.p0 = vals[0];
       this->_touch.Ext.p1 = vals[1];
       this->_touch.Ext.p2 = vals[2];
-      return 1;
+      return b;
     }
 
   private:
@@ -268,15 +412,16 @@ class SensTable : public Usermod
     TouchSens _touch;
     SENST_MODE _mode;
     uint32_t _updateIntervalMS;
-    uint32_t _ledsOffTimeoutMS;
-    time_t _leds_time[40];
+    uint32_t _ledsOffTimeoutMS, _ledsFadeMS;
+    struct{
+      time_t time[40];
+    } _leds_ctrl;
 
     // strings to reduce flash memory usage (used more than twice)
-    static const char _name[];
-    static const char _sensUpdIntervalMS[];
-    static const char _ledsTimeoutMS[];
+    static const char _name[], _sensUpdIntervalMS[], _ledsTimeoutMS[], _ledsFadeTimeMS[];
 };
 
 const char SensTable::_name[] PROGMEM = "Sensitive Table";
 const char SensTable::_sensUpdIntervalMS[] PROGMEM = "Sensors update interval [ms]";
-const char SensTable::_ledsTimeoutMS[] PROGMEM = "Leds timeout [ms]";
+const char SensTable::_ledsTimeoutMS[] PROGMEM = "Leds STILL time [ms]";
+const char SensTable::_ledsFadeTimeMS[] PROGMEM = "Leds FADE time [ms]";
