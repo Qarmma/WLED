@@ -151,13 +151,21 @@ class SensTable : public Usermod
      **/ 
     bool handleButton(uint8_t b)
     {
-      if(isButtonPressed(b))
+      static bool pressed[2] = {0};
+      if(b >= 2){return 0;}
+      if(isButtonPressed(b) && pressed[b] == 0)
       {
+        pressed[b] = 1;
         DEBUG_PRINT("Button pressed :");
-        DEBUG_PRINT(b);
-        DEBUG_PRINTLN();
+        DEBUG_PRINTLN(b);
       }
-      if(buttonType[b] != BTN_TYPE_PUSH) return 0;
+      else if(!isButtonPressed(b) && pressed[b] == 1)
+      {
+        pressed[b] = 0;
+        DEBUG_PRINT("Button released :");
+        DEBUG_PRINTLN(b);
+      }
+      return 1;
       switch(b)
       {
         // Btn 0 switches working mode
