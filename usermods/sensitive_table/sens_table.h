@@ -39,14 +39,6 @@ class SensTable : public Usermod
     {
         uint64_t val;
         bool bit[64];
-        struct
-        {
-          bool ncH[24];
-          uint8_t p2;
-          uint8_t p1;
-          uint8_t p0;
-          bool ncL[16];
-        } Ext;
         ~TouchSens() {}
     };
 
@@ -72,7 +64,7 @@ class SensTable : public Usermod
     }
 
 
-    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsOffTimeoutMS(1500), _ledsFadeMS(500), _leds_ctrl{0} {}
+    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsOffTimeoutMS(1500), _ledsFadeMS(500), _leds_ctrl{{0}} {}
     
     virtual ~SensTable(){}
 
@@ -138,7 +130,7 @@ class SensTable : public Usermod
     unsigned long now;
     void loop()
     {
-      static unsigned long time = 0;
+      static unsigned long time = 0, triggertime = 0;
       static bool anychange;
       
       // Check if is in "detect mode"
@@ -164,17 +156,16 @@ class SensTable : public Usermod
         {
           static bool r;
           r = digitalRead(GPIO_EXT[i]);
-          if(r != this->_touch.bit[i])
-          {
-            this->_leds_ctrl.time[i] = r ? now : now + _ledsOffTimeoutMS;
-            anychange |= 1;
-          }
-          this->_touch.bit[i] = r;
+          anychange |= _manageSens(r, i);
         }
         
         if(anychange)
         {
-          strip.trigger();  // force strip refresh
+          triggertime = now + 2*this->_ledsFadeMS + this->_ledsOffTimeoutMS; // worst case
+        }
+        if(now < triggertime)
+        {
+          strip.trigger();// force strip refress while at least fading
         }
 
         // DBG
@@ -192,49 +183,42 @@ class SensTable : public Usermod
      */
     void handleOverlayDraw()
     {
+
       if(this->_mode == SENST_MODE::TOUCH)
       {
         // Adapt color and on times
         for(uint8_t i = 0; i < 40; i++)
         {
+          static float t;
+          t = now - this->_leds_ctrl.time[i];
           // on
           if(this->_touch.bit[i])
           {
             // fading
-            if(now - this->_leds_ctrl.time[i] < this->_ledsFadeMS)
+            if(t < this->_ledsFadeMS)
             {
-              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8(255 - (now - this->_leds_ctrl.time[i]) / this->_ledsFadeMS));
+              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8( 255*(t / float(this->_ledsFadeMS))));
             }
-            // else still -> let color as is
+            //else still -> let color as is
           }
           // off
           else
           {
             // still timeout (need this not to trigger fading too fast)
-            if(now < this->_leds_ctrl.time[i]){}
+            if(now < this->_leds_ctrl.time[i])
+            {
+              // strip.setPixelColor(i, CRGB(0,255,255));
+            }
             // fade
             else if(now - this->_ledsFadeMS < this->_leds_ctrl.time[i])
             {
-              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8((now - this->_leds_ctrl.time[i]) / this->_ledsFadeMS));
+              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8( 255 - 255*(t / float(this->_ledsFadeMS)) ));
             }
             else
             {
               strip.setPixelColor(i, 0);
             }
           }
-
-          // Register touch
-          // if(this->_touch.bit[i]){this->_leds_time[i] = now + this->_ledsOffTimeoutMS + this->_ledsFadeMS*2;}
-          // Act on touch/no touch
-          // if(this->_leds_time[i] > now)
-          // {
-          //   //strip.setPixelColor(i, strip.getPixelColor(i));//strip._colors_t[0]);
-          // }
-          // else
-          // {
-          //   //strip.setPixelColor(i, 0);
-          //   strip.setPixelColor(i, 0);
-          // }
         }
       }
     }
@@ -350,8 +334,6 @@ class SensTable : public Usermod
       }
       Wire.begin(GPIO_SDA,GPIO_SCL,1000000);
       Wire.beginTransmission(EXT_I2C_ADDR);
-      static uint8_t tw[3] = {0xFF};
-      Wire.write(tw,3);
       if(Wire.endTransmission() != I2C_ERROR_OK)
       {
         PRINTLN("  ** I2C extender not found");
@@ -370,39 +352,36 @@ class SensTable : public Usermod
       if(!this->_hasExtender) { return 0; }
       PRINTLN("EXTERNAL READ !");
       Wire.requestFrom(EXT_I2C_ADDR,3); 
-      Wire.readBytes(vals, 3); // not checking how many bytes received
+      Wire.readBytes(vals, 3); // 3 data
+      PRINTLN("Read bytes : "); PRINTLN(vals[0]);PRINTLN(vals[1]);PRINTLN(vals[2]);
       bool b = 0;
-      uint8_t* p;
       for(uint8_t j = 0; j<3; j++)
       {
-        switch(j)
-        {
-          case 0:
-            p = &this->_touch.Ext.p0;
-            break;
-          case 1:
-            p = &this->_touch.Ext.p1;
-            break;
-          case 2:
-            p = &this->_touch.Ext.p2;
-            break;
-          default:
-            break;
-        }
         for(uint8_t i = 0; i < 8; i++)
         {
           static bool r;
-          r = *p & (1 << i);
-          if(r != this->_touch.bit[16 + i + j*8])
-          {
-            this->_leds_ctrl.time[16 + i + j*8] = r ? now : now + _ledsOffTimeoutMS;
-            b |= 1;
-          }
+          static uint8_t ind;
+          r = vals[j] & (1 << i);
+          ind = _EXT_LUT[i+8*j];
+          b |= _manageSens(r, ind);
         }
       }
-      this->_touch.Ext.p0 = vals[0];
-      this->_touch.Ext.p1 = vals[1];
-      this->_touch.Ext.p2 = vals[2];
+      return b;
+    }
+
+    inline bool _manageSens(bool newval, uint8_t index)
+    {
+      bool b = 0;
+      if(newval != this->_touch.bit[index])
+      {
+        if(!newval && now-this->_leds_ctrl.time[index] < _ledsFadeMS){} // does not register until fade-in completed
+        else
+        {
+          this->_leds_ctrl.time[index] = newval ? now : now + _ledsOffTimeoutMS;
+          b = 1;
+          this->_touch.bit[index] = newval;
+        }
+      }
       return b;
     }
 
@@ -419,9 +398,11 @@ class SensTable : public Usermod
 
     // strings to reduce flash memory usage (used more than twice)
     static const char _name[], _sensUpdIntervalMS[], _ledsTimeoutMS[], _ledsFadeTimeMS[];
+    static const uint8_t _EXT_LUT[];
 };
 
 const char SensTable::_name[] PROGMEM = "Sensitive Table";
 const char SensTable::_sensUpdIntervalMS[] PROGMEM = "Sensors update interval [ms]";
 const char SensTable::_ledsTimeoutMS[] PROGMEM = "Leds STILL time [ms]";
 const char SensTable::_ledsFadeTimeMS[] PROGMEM = "Leds FADE time [ms]";
+const uint8_t SensTable::_EXT_LUT[] PROGMEM = {39,37,35,38,36,34,33,32,30,28,26,24,22,20,21,23,25,27,29,31,19,17,16,18};
