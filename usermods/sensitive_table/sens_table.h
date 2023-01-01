@@ -132,11 +132,23 @@ class SensTable : public Usermod
     {
       static unsigned long time = 0,  refreshtime = 0, triggertime = 0;
       static bool anychange;
+      static uint8_t oldmode = 255;
       
       // Check if is in "detect mode"
       if(this->_mode == SENST_MODE::TOUCH)
       {
         if(strip.isUpdating()) return;
+
+        // Force mode to static
+        if(strip._segments[0].mode != 0)
+        {
+          if(oldmode == 255)
+          {
+            oldmode = strip._segments[0].mode;
+          }
+          strip.setMode(0,0);
+        }
+        
         anychange = 0;
         now = millis();
 
@@ -180,6 +192,15 @@ class SensTable : public Usermod
           strip.trigger();// force strip refresh while at least fading
           stateChanged = true;  // inform external devices/UI of change
           colorUpdated(CALL_MODE_DIRECT_CHANGE);
+        }
+      }
+      // Not in our mod
+      else
+      {
+        if(oldmode != 255)
+        {
+          strip.setMode(0,oldmode);
+          oldmode = 255;
         }
       }
     }
