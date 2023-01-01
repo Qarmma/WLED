@@ -64,7 +64,7 @@ class SensTable : public Usermod
     }
 
 
-    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::WLED), _updateIntervalMS(20), _ledsOffTimeoutMS(1500), _ledsFadeMS(500), _leds_ctrl{{0}} {}
+    SensTable() : _hasExtender(1), _touch({0}), _mode(SENST_MODE::TOUCH), _updateIntervalMS(20), _ledsOffTimeoutMS(1500), _ledsFadeMS(500), _leds_ctrl{{0}} {}
     
     virtual ~SensTable(){}
 
@@ -74,7 +74,7 @@ class SensTable : public Usermod
      **/
     void setup()
     {
-      if(esp_reset_reason() != esp_reset_reason_t::ESP_RST_SW) { delay(6000); }
+      //if(esp_reset_reason() != esp_reset_reason_t::ESP_RST_SW) { delay(6000); }
       PRINTLN("SensTable mod setting up");
       PinOwner po = PinOwner::None;
       uint8_t i;
@@ -130,7 +130,7 @@ class SensTable : public Usermod
     unsigned long now;
     void loop()
     {
-      static unsigned long time = 0, triggertime = 0;
+      static unsigned long time = 0,  refreshtime = 0, triggertime = 0;
       static bool anychange;
       
       // Check if is in "detect mode"
@@ -138,41 +138,49 @@ class SensTable : public Usermod
       {
         if(strip.isUpdating()) return;
         anychange = 0;
-
         now = millis();
-        if(now < time) return;
-        time = now + this->_updateIntervalMS;
 
-        // Check any press
-        PRINT("nINT = ");
-        PRINTLN(digitalRead(GPIO_nINT));
-        if(!digitalRead(GPIO_nINT))
+        // Do not refresh too often
+        if(now >= time)
         {
-          PRINTLN(" ** Reading exts");
-          anychange &= _readExt();
-        }
-        // Check direct wiring
-        for(uint8_t i = 0; i < GPIO_EXT_NB; i++)
-        {
-          static bool r;
-          r = digitalRead(GPIO_EXT[i]);
-          anychange |= _manageSens(r, i);
+          time = now + this->_updateIntervalMS;
+
+          // Check any press
+          PRINT("nINT = ");
+          PRINTLN(digitalRead(GPIO_nINT));
+          if(!digitalRead(GPIO_nINT))
+          {
+            PRINTLN(" ** Reading exts");
+            anychange &= _readExt();
+          }
+          // Check direct wiring
+          for(uint8_t i = 0; i < GPIO_EXT_NB; i++)
+          {
+            static bool r;
+            r = digitalRead(GPIO_EXT[i]);
+            anychange |= _manageSens(r, i);
+          }
+          
+          if(anychange)
+          {
+            triggertime = now + 2*this->_ledsFadeMS + this->_ledsOffTimeoutMS; // worst case
+          }
+
+          // DBG
+          static char b[BINSZ];
+          inAsBin(&this->_touch, b);
+          PRINTLN(b);
+          PRINTLN();
         }
         
-        if(anychange)
+        // Force refresh @ max 60Hz and only when needed
+        if(now < triggertime && now > refreshtime /*lock to max 60Hz*/ )
         {
-          triggertime = now + 2*this->_ledsFadeMS + this->_ledsOffTimeoutMS; // worst case
+          refreshtime = now + 17;
+          strip.trigger();// force strip refresh while at least fading
+          stateChanged = true;  // inform external devices/UI of change
+          colorUpdated(CALL_MODE_DIRECT_CHANGE);
         }
-        if(now < triggertime)
-        {
-          strip.trigger();// force strip refress while at least fading
-        }
-
-        // DBG
-        static char b[BINSZ];
-        inAsBin(&this->_touch, b);
-        PRINTLN(b);
-        PRINTLN();
       }
     }
 
@@ -197,7 +205,7 @@ class SensTable : public Usermod
             // fading
             if(t < this->_ledsFadeMS)
             {
-              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8( 255*(t / float(this->_ledsFadeMS))));
+              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8_video( 255*(t / float(this->_ledsFadeMS))));
             }
             //else still -> let color as is
           }
@@ -212,7 +220,7 @@ class SensTable : public Usermod
             // fade
             else if(now - this->_ledsFadeMS < this->_leds_ctrl.time[i])
             {
-              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8( 255 - 255*(t / float(this->_ledsFadeMS)) ));
+              strip.setPixelColor(i, CRGB(strip.getPixelColor(i)).nscale8_video( 255 - 255*(t / float(this->_ledsFadeMS)) ));
             }
             else
             {
