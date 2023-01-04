@@ -158,31 +158,32 @@ class SensTable : public Usermod
           time = now + this->_updateIntervalMS;
 
           // Check any press
-          PRINT("nINT = ");
-          PRINTLN(digitalRead(GPIO_nINT));
+          //PRINT("nINT = ");
+          //PRINTLN(digitalRead(GPIO_nINT));
           if(!digitalRead(GPIO_nINT))
           {
-            PRINTLN(" ** Reading exts");
-            anychange &= _readExt();
+            //PRINTLN(" ** Reading exts");
+            anychange |= _readExt();
           }
           // Check direct wiring
           for(uint8_t i = 0; i < GPIO_EXT_NB; i++)
           {
             static bool r;
             r = digitalRead(GPIO_EXT[i]);
-            anychange |= _manageSens(r, i);
+            anychange |= _manageSens(r, i > 7 ? 7 + GPIO_EXT_NB - i : i);
           }
           
           if(anychange)
           {
             triggertime = now + 2*this->_ledsFadeMS + this->_ledsOffTimeoutMS; // worst case
-          }
 
-          // DBG
-          static char b[BINSZ];
-          inAsBin(&this->_touch, b);
-          PRINTLN(b);
-          PRINTLN();
+            // DBG
+            static char b[BINSZ];
+            inAsBin(&this->_touch, b);
+            PRINTLN("Change detected:");
+            PRINTLN(b);
+            PRINTLN();
+          }
         }
         
         // Force refresh @ max 60Hz and only when needed
@@ -379,11 +380,11 @@ class SensTable : public Usermod
     {
       static uint8_t vals[3] = {0};
       if(!this->_hasExtender) { return 0; }
-      PRINTLN("EXTERNAL READ !");
+     // PRINTLN("EXTERNAL READ !");
       Wire.requestFrom(EXT_I2C_ADDR,3); 
       Wire.readBytes(vals, 3); // 3 data
-      PRINTLN("Read bytes : "); PRINTLN(vals[0]);PRINTLN(vals[1]);PRINTLN(vals[2]);
-      bool b = 0;
+    //  PRINTLN("Read bytes : "); PRINTLN(vals[0]);PRINTLN(vals[1]);PRINTLN(vals[2]);
+      bool b = 0, c;
       for(uint8_t j = 0; j<3; j++)
       {
         for(uint8_t i = 0; i < 8; i++)
@@ -392,7 +393,13 @@ class SensTable : public Usermod
           static uint8_t ind;
           r = vals[j] & (1 << i);
           ind = _EXT_LUT[i+8*j];
-          b |= _manageSens(r, ind);
+          c = _manageSens(r, ind);
+          b |= c;
+          if(c)
+          {
+            PRINT("Sensor in lut is index : ");
+            PRINTLN(ind);
+          }
         }
       }
       return b;
@@ -434,4 +441,4 @@ const char SensTable::_name[] PROGMEM = "Sensitive Table";
 const char SensTable::_sensUpdIntervalMS[] PROGMEM = "Sensors update interval [ms]";
 const char SensTable::_ledsTimeoutMS[] PROGMEM = "Leds STILL time [ms]";
 const char SensTable::_ledsFadeTimeMS[] PROGMEM = "Leds FADE time [ms]";
-const uint8_t SensTable::_EXT_LUT[] PROGMEM = {39,37,35,38,36,34,33,32,30,28,26,24,22,20,21,23,25,27,29,31,19,17,16,18};
+const uint8_t SensTable::_EXT_LUT[] PROGMEM = {39,37,35,38,36,34,33,32, 25,27,29,31,22,20,21,23, 30,28,26,24,19,17,16,18};
